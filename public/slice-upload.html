@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Document</title>
+  </head>
+  <body>
+    <input type="file" name="file" />
+    <button onclick="handleUpload()">上传</button>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <script src="https://cdn.bootcdn.net/ajax/libs/spark-md5/3.0.2/spark-md5.min.js"></script>
+    <script>
+
+      let md5 = ""
+      const fileDom = document.querySelector("input[type=file]")
+      
+      fileDom.onchange = () => {
+        md5 = ""
+      }
+
+      async function handleUpload() {
+        const files = fileDom.files
+
+        if (files.length === 0) {
+          return alert("请选择文件")
+        }
+
+        const file = files[0]
+        md5 = md5 || await computeFileMD5(file)
+        
+        const chunkSize = 1024 * 1024 * 1
+        const chunks =  Math.ceil(file.size / chunkSize)
+        const chunkList = []
+
+        let currentChunk = 1
+        // 切片
+        while(currentChunk <= chunks){
+          const start = (currentChunk - 1) * chunkSize
+          const end = currentChunk * chunkSize
+          const chunk = file.slice(start, end)
+          chunkList.push({
+            fileName: currentChunk,
+            file: new File([chunk], currentChunk)
+          })
+          currentChunk ++
+        }
+
+        for (const item of chunkList) {
+          await upload(item.file, item.fileName, file.name)
+        }
+
+        merge(md5, file.name)        
+      }
+
+      function upload(file, name, fileName){
+        return new Promise((resolve, reject) => {
+          const formData = new FormData()
+          formData.append('slice', 'true')
+          formData.append('md5', md5)
+          formData.append('extension', fileName.split('.').pop())
+          formData.append('file_name', name)
+          formData.append('file', file)
+          axios.post('/upload', formData).then(res=> {
+            resolve(res)
+          })
+        })
+      }
+
+      function merge(md5, file_name){
+        axios.post('/merge', { md5, file_name }).then(res=> {
+            console.log(res);
+        })
+      }
+
+      function computeFileMD5(file) {
+        return new Promise((resolve, reject) => {
+          let blobSlice =
+            File.prototype.slice ||
+            File.prototype.mozSlice ||
+            File.prototype.webkitSlice
+          let chunkSize = 2097152 // 按照一片 2MB 分片
+          let chunks = Math.ceil(file.size / chunkSize) // 片数
+          let currentChunk = 0
+          let spark = new SparkMD5.ArrayBuffer()
+          let fileReader = new FileReader()
+
+          fileReader.onload = function (e) {
+            spark.append(e.target.result)
+            currentChunk++
+
+            if (currentChunk < chunks) {
+              loadNext()
+            } else {
+              let md5 = spark.end() //最终md5值
+              spark.destroy() //释放缓存
+              resolve(md5)
+            }
+          }
+
+          fileReader.onerror = function (e) {
+            reject(e)
+          }
+
+          function loadNext() {
+            let start = currentChunk * chunkSize
+            let end =
+              start + chunkSize >= file.size ? file.size : start + chunkSize
+            fileReader.readAsArrayBuffer(blobSlice.call(file, start, end))
+          }
+
+          loadNext()
+        })
+      }
+    </script>
+  </body>
+</html>
